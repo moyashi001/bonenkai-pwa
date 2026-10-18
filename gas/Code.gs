@@ -5,9 +5,12 @@ const SHEET_CALL = '声掛け';
 const SHEET_ATTEND = '参加管理';
 const SHEET_INFO = '開催情報';
 const CALL_HEADER = ['名前', '声掛け済み', '声をかけた人', '更新日時', 'クラス'];
-const ATTEND_HEADER = ['名前', '一次会', '二次会', '備考', '更新日時', 'クラス'];
+const COMPANION_HEADER = ['一次会大人', '一次会子ども', '二次会大人', '二次会子ども'];
+const COMPANION_KEYS = ['firstAdults', 'firstKids', 'secondAdults', 'secondKids'];
+const ATTEND_HEADER = ['名前', '一次会', '二次会', '備考', '更新日時', 'クラス', ...COMPANION_HEADER];
 const CALL_CLASS_COL = 5;
 const ATTEND_CLASS_COL = 6;
+const COMPANION_COL = 7;
 const INFO_KEYS = ['日時', '場所', '会費', '回答期限', '二次会の場所'];
 const STATUSES = ['参加', '不参加', '未定'];
 const CLASSES = ['1組', '2組'];
@@ -150,13 +153,19 @@ const ACTIONS = {
   attend(s, req) {
     const name = String(req.name);
     requireMember_(s, name);
-    const values = [status_(req.first), status_(req.second), safeText_(req.note, 200), new Date()];
+    const first = status_(req.first);
+    const second = status_(req.second);
+    const values = [first, second, safeText_(req.note, 200), new Date()];
+    // 同伴者は「参加」のときだけ数える
+    const companions = COMPANION_KEYS.map(k =>
+      (k.startsWith('first') ? first : second) === '参加' ? count_(req[k]) : 0);
     let row = findRow_(s.attend, name);
     if (!row) {
       s.attend.appendRow([name]);
       row = s.attend.getLastRow();
     }
     s.attend.getRange(row, 2, 1, 4).setValues([values]);
+    s.attend.getRange(row, COMPANION_COL, 1, companions.length).setValues([companions]);
   },
 };
 
@@ -170,15 +179,17 @@ function sheets_() {
   if (!s.call || !s.attend || !s.info) {
     throw new Error('シートがありません。GASエディタで setup を実行してください');
   }
-  // クラス列がない既存シートには見出しを足す
-  ensureHeader_(s.call, CALL_CLASS_COL, 'クラス');
-  ensureHeader_(s.attend, ATTEND_CLASS_COL, 'クラス');
+  // 後から追加した列（クラス・同伴者）の見出しがない既存シートには見出しを足す
+  ensureHeader_(s.call, CALL_HEADER);
+  ensureHeader_(s.attend, ATTEND_HEADER);
   return s;
 }
 
-function ensureHeader_(sheet, col, label) {
-  const cell = sheet.getRange(1, col);
-  if (cell.getValue() !== label) cell.setValue(label).setFontWeight('bold');
+function ensureHeader_(sheet, header) {
+  const range = sheet.getRange(1, 1, 1, header.length);
+  if (range.getValues()[0].some((v, i) => v !== header[i])) {
+    range.setValues([header]).setFontWeight('bold');
+  }
 }
 
 function readState_() {
@@ -189,6 +200,7 @@ function readState_() {
       members.set(name, {
         name, cls: '', called: false, caller: '', calledAt: '',
         first: '', second: '', note: '', updatedAt: '',
+        firstAdults: 0, firstKids: 0, secondAdults: 0, secondKids: 0,
       });
     }
     return members.get(name);
@@ -207,6 +219,7 @@ function readState_() {
     m.note = String(r[3]);
     m.updatedAt = formatDate_(r[4]);
     m.cls = m.cls || String(r[ATTEND_CLASS_COL - 1] || '');
+    COMPANION_KEYS.forEach((k, i) => { m[k] = Number(r[COMPANION_COL - 1 + i]) || 0; });
   });
   const info = s.info.getDataRange().getDisplayValues().slice(1)
     .filter(([label, value]) => label && value)
@@ -266,6 +279,11 @@ function class_(v) {
   const s = String(v || '');
   if (s && !CLASSES.includes(s)) throw new Error('クラスの値が不正です');
   return s;
+}
+
+function count_(v) {
+  const n = Math.floor(Number(v) || 0);
+  return Math.min(Math.max(n, 0), 20);
 }
 
 function status_(v) {

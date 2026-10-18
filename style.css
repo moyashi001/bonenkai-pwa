@@ -55,7 +55,7 @@ button.ghost { background: transparent; }
 button.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
 button.small { padding: 6px 12px; font-size: 14px; white-space: nowrap; }
 
-input[type="text"], select, textarea {
+input[type="text"], input[type="search"], select, textarea {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -146,20 +146,59 @@ main { padding: 0 16px 32px; }
 .me { background: var(--me); }
 .empty { color: var(--muted); font-size: 14px; padding: 8px 2px; }
 
-.summary {
-  width: 100%;
-  margin-top: 16px;
-  border-collapse: collapse;
-  background: var(--surface);
-  border-radius: 10px;
-  overflow: hidden;
-  text-align: center;
-  font-size: 14px;
+.search { margin: 10px 16px 0; }
+
+/* 集計タイル（タップで絞り込み） */
+.summary-caption { margin: 16px 0 6px; font-size: 13px; color: var(--muted); }
+.summary-block { margin-bottom: 12px; }
+.summary-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 6px; }
+.summary-title { font-weight: 700; }
+.summary-total { font-size: 13px; color: var(--muted); }
+.summary-total b { font-size: 16px; color: var(--text); }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 2px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  color: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12);
 }
-.summary th, .summary td { padding: 8px 4px; border-bottom: 1px solid var(--border); }
-.summary thead th { color: var(--muted); font-weight: 600; }
-.summary tbody th { text-align: left; padding-left: 12px; }
-.summary td { font-size: 18px; font-weight: 700; }
+.tile.yes { background: var(--yes); }
+.tile.no { background: var(--no); }
+.tile.maybe { background: var(--maybe); }
+.tile.none { background: var(--surface); color: var(--text); border-color: var(--border); }
+.tile.selected { border-color: var(--text); box-shadow: 0 0 0 3px var(--accent); transform: translateY(-1px); }
+.tile-label { font-size: 12px; font-weight: 600; }
+.tile-num { font-size: 22px; font-weight: 800; line-height: 1.1; }
+.tile-num small { font-size: 11px; font-weight: 600; margin-left: 1px; }
+.tile-extra { font-size: 10px; white-space: nowrap; }
+
+.filter-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 8px 12px;
+  background: var(--me);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.filter-chip button { padding: 4px 10px; font-size: 13px; flex-shrink: 0; }
+
+/* 同伴者 */
+.companion { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin: -2px 0 10px; font-size: 14px; }
+.companion .label { width: 3.5em; flex-shrink: 0; color: var(--muted); margin-right: -4px; }
+.counter { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.counter b { min-width: 1.2em; text-align: center; color: var(--text); font-size: 16px; }
+.counter button { width: 32px; height: 32px; padding: 0; border-radius: 50%; font-weight: 700; }
+.counter button:disabled { opacity: 0.35; cursor: default; }
 
 .cards { margin-top: 12px; }
 .card {

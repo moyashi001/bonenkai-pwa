@@ -40,6 +40,9 @@ const store = {
 let myName = store.get('bonenkai.myName');
 let currentTab = store.get('bonenkai.tab') || 'call';
 let currentClass = store.get('bonenkai.class') || 'all';
+let searchQuery = '';
+// 集計タイルでの絞り込み（{ key: 'first' | 'second', status }）
+let attendFilter = null;
 // 名前を追加したとき「自分として設定するか」を聞くのは1回だけ
 let askedMyName = false;
 
@@ -131,8 +134,20 @@ function isMember(name) {
 const classOf = m => (CLASSES.includes(m.cls) ? m.cls : '');
 const classLabel = c => c || '未設定';
 
-function visibleMembers() {
+function classMembers() {
   return currentClass === 'all' ? state.members : state.members.filter(m => classOf(m) === currentClass);
+}
+
+// 検索は部分一致。姓と名の間のスペースは無視する
+const compact = s => s.replace(/\s+/g, '');
+function visibleMembers() {
+  const q = compact(searchQuery);
+  return q ? classMembers().filter(m => compact(m.name).includes(q)) : classMembers();
+}
+
+function emptyHtml() {
+  if (!state.members.length) return '<p class="empty">メンバーがいません。「メンバー」タブから追加してください</p>';
+  return '<p class="empty">該当するメンバーがいません</p>';
 }
 
 // 「全員」のときはクラスごとの見出しで分け、クラスを選んでいるときはそのまま描画する
@@ -187,11 +202,9 @@ function renderClassFilter() {
   });
 }
 
-const EMPTY = '<p class="empty">メンバーがいません。「メンバー」タブから追加してください</p>';
-
 function renderCall() {
   const members = visibleMembers();
-  if (!members.length) { el.call.innerHTML = EMPTY; return; }
+  if (!members.length) { el.call.innerHTML = emptyHtml(); return; }
   const group = (title, list, row) => `
     <h3 class="group-title">${title}<span class="count">${list.length}人</span></h3>
     <ul class="list">${list.map(row).join('') || '<li class="empty">なし</li>'}</ul>`;
@@ -211,31 +224,71 @@ function renderCall() {
       </li>`));
 }
 
-function counts(members, key) {
-  const c = { 参加: 0, 不参加: 0, 未定: 0, 未回答: 0 };
-  members.forEach(m => { c[STATUSES.includes(m[key]) ? m[key] : '未回答']++; });
-  return c;
+const TILE_STATUSES = ['参加', '不参加', '未定', '未回答'];
+const TILE_CLASS = { 参加: 'yes', 不参加: 'no', 未定: 'maybe', 未回答: 'none' };
+const PARTY_LABEL = { first: '一次会', second: '二次会' };
+const statusOf = (m, key) => (STATUSES.includes(m[key]) ? m[key] : '未回答');
+const sum = (members, field) => members.reduce((n, m) => n + (Number(m[field]) || 0), 0);
+
+// 集計はクラスの絞り込みだけを反映し、検索には影響されない
+function summaryBlock(members, key) {
+  const c = Object.fromEntries(TILE_STATUSES.map(s => [s, members.filter(m => statusOf(m, key) === s).length]));
+  const joined = members.filter(m => statusOf(m, key) === '参加');
+  const adults = sum(joined, `${key}Adults`);
+  const kids = sum(joined, `${key}Kids`);
+  const tiles = TILE_STATUSES.map(s => {
+    const selected = attendFilter?.key === key && attendFilter.status === s;
+    const extra = s === '参加' && (adults || kids) ? `<span class="tile-extra">+大人${adults} 子${kids}</span>` : '';
+    return `
+      <button class="tile ${TILE_CLASS[s]}${selected ? ' selected' : ''}" data-act="tile" data-key="${key}" data-status="${s}">
+        <span class="tile-label">${s}</span>
+        <span class="tile-num">${c[s]}<small>人</small></span>${extra}
+      </button>`;
+  }).join('');
+  return `
+    <div class="summary-block">
+      <div class="summary-head">
+        <span class="summary-title">${PARTY_LABEL[key]}</span>
+        <span class="summary-total">合計 <b>${c.参加 + adults + kids}</b>人（本人${c.参加}・大人${adults}・子ども${kids}）</span>
+      </div>
+      <div class="tiles">${tiles}</div>
+    </div>`;
+}
+
+function companionRow(m, key) {
+  if (m[key] !== '参加') return '';
+  const counter = (field, label) => {
+    const v = Number(m[field]) || 0;
+    return `
+      <span class="counter">${label}
+        <button data-act="comp" data-name="${esc(m.name)}" data-field="${field}" data-delta="-1"${v <= 0 ? ' disabled' : ''} aria-label="${label}を減らす">－</button>
+        <b>${v}</b>
+        <button data-act="comp" data-name="${esc(m.name)}" data-field="${field}" data-delta="1" aria-label="${label}を増やす">＋</button>
+      </span>`;
+  };
+  return `<div class="companion"><span class="label">同伴</span>${counter(`${key}Adults`, '大人')}${counter(`${key}Kids`, '子ども')}</div>`;
 }
 
 function renderAttend() {
-  const members = visibleMembers();
-  if (!members.length) { el.attend.innerHTML = EMPTY; return; }
-  const summaryRow = (label, key) => {
-    const c = counts(members, key);
-    return `<tr><th>${label}</th>${['参加', '不参加', '未定', '未回答'].map(s => `<td>${c[s]}</td>`).join('')}</tr>`;
-  };
+  if (!state.members.length) { el.attend.innerHTML = emptyHtml(); return; }
+  let members = visibleMembers();
+  if (attendFilter) members = members.filter(m => statusOf(m, attendFilter.key) === attendFilter.status);
   const seg = (m, key) => `
     <div class="seg">${STATUSES.map(s => `
       <button class="${m[key] === s ? `on ${STATUS_CLASS[s]}` : ''}" data-act="status"
         data-name="${esc(m.name)}" data-key="${key}" data-value="${s}">${s}</button>`).join('')}
     </div>`;
+  const filterChip = attendFilter ? `
+    <div class="filter-chip">
+      <span>${PARTY_LABEL[attendFilter.key]}・${attendFilter.status}（${members.length}人）を表示中</span>
+      <button data-act="clear-tile">✕ 解除</button>
+    </div>` : '';
   el.attend.innerHTML = `
-    <table class="summary">
-      <caption>${currentClass === 'all' ? '全員' : currentClass}の集計</caption>
-      <thead><tr><th></th><th>参加</th><th>不参加</th><th>未定</th><th>未回答</th></tr></thead>
-      <tbody>${summaryRow('一次会', 'first')}${summaryRow('二次会', 'second')}</tbody>
-    </table>
-    ${byClassSections(members, list => `
+    <p class="summary-caption">${currentClass === 'all' ? '全員' : currentClass}の集計（タップで絞り込み）</p>
+    ${summaryBlock(classMembers(), 'first')}
+    ${summaryBlock(classMembers(), 'second')}
+    ${filterChip}
+    ${members.length ? byClassSections(members, list => `
     <ul class="list cards">${list.map(m => `
       <li class="card${m.name === myName ? ' me' : ''}">
         <div class="card-head">
@@ -243,17 +296,19 @@ function renderAttend() {
           ${m.updatedAt ? `<span class="sub">更新 ${esc(m.updatedAt)}</span>` : ''}
         </div>
         <div class="status-row"><span class="label">一次会</span>${seg(m, 'first')}</div>
+        ${companionRow(m, 'first')}
         <div class="status-row"><span class="label">二次会</span>${seg(m, 'second')}</div>
+        ${companionRow(m, 'second')}
         <input class="note" type="text" maxlength="200" placeholder="備考（遅れて参加 など）"
           data-act="note" data-name="${esc(m.name)}" value="${esc(m.note)}">
       </li>`).join('')}
-    </ul>`)}`;
+    </ul>`) : emptyHtml()}`;
 }
 
 function renderMembers() {
   const members = visibleMembers();
   if (!members.length) {
-    el.memberList.innerHTML = '<p class="empty">まだ登録されていません</p>';
+    el.memberList.innerHTML = emptyHtml();
     return;
   }
   el.memberList.innerHTML = byClassSections(members, list => `
@@ -369,7 +424,14 @@ function saveAttendance(name, changes) {
   if (!m) return;
   // 備考の保存直後に参加可否を押した場合でも備考を巻き戻さないよう、先に手元へ反映する
   Object.assign(m, changes);
-  run('attend', { name, first: m.first, second: m.second, note: m.note });
+  // 参加以外にしたら、その会の同伴者は 0 に戻す
+  ['first', 'second'].forEach(key => {
+    if (m[key] !== '参加') m[`${key}Adults`] = m[`${key}Kids`] = 0;
+  });
+  run('attend', {
+    name, first: m.first, second: m.second, note: m.note,
+    firstAdults: m.firstAdults, firstKids: m.firstKids, secondAdults: m.secondAdults, secondKids: m.secondKids,
+  });
 }
 
 async function bulkAdd() {
@@ -408,10 +470,28 @@ document.addEventListener('click', e => {
   else if (act === 'uncall') {
     if (confirm(`「${name}」の声掛けを取り消しますか？`)) run('uncall', { name });
   } else if (act === 'status') {
+    const { key } = btn.dataset;
     const m = state.members.find(x => x.name === name);
     // 選択中のボタンをもう一度押すと未回答に戻す
-    const value = m && m[btn.dataset.key] === btn.dataset.value ? '' : btn.dataset.value;
-    saveAttendance(name, { [btn.dataset.key]: value });
+    const value = m && m[key] === btn.dataset.value ? '' : btn.dataset.value;
+    const message = value
+      ? `${name} さんの${PARTY_LABEL[key]}を「${value}」にします。よろしいですか？`
+      : `${name} さんの${PARTY_LABEL[key]}を未回答に戻します。よろしいですか？`;
+    if (confirm(message)) saveAttendance(name, { [key]: value });
+  } else if (act === 'comp') {
+    const m = state.members.find(x => x.name === name);
+    if (!m) return;
+    const { field } = btn.dataset;
+    const value = Math.max(0, (Number(m[field]) || 0) + Number(btn.dataset.delta));
+    saveAttendance(name, { [field]: value });
+  } else if (act === 'tile') {
+    const { key, status } = btn.dataset;
+    const same = attendFilter?.key === key && attendFilter.status === status;
+    attendFilter = same ? null : { key, status };
+    renderAttend();
+  } else if (act === 'clear-tile') {
+    attendFilter = null;
+    renderAttend();
   } else if (act === 'edit') editMember(name);
   else if (act === 'remove') removeMember(name);
 });
@@ -463,6 +543,13 @@ function syncAddClass() {
 }
 el.classFilter.addEventListener('click', syncAddClass);
 syncAddClass();
+
+$('search').addEventListener('input', e => {
+  searchQuery = e.target.value;
+  renderCall();
+  renderAttend();
+  renderMembers();
+});
 
 $('bulk-btn').addEventListener('click', bulkAdd);
 el.me.addEventListener('click', chooseMyName);
