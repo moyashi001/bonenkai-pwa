@@ -238,7 +238,7 @@ function summaryBlock(members, key) {
   const kids = sum(joined, `${key}Kids`);
   const tiles = TILE_STATUSES.map(s => {
     const selected = attendFilter?.key === key && attendFilter.status === s;
-    const extra = s === '参加' && (adults || kids) ? `<span class="tile-extra">+大人${adults} 子${kids}</span>` : '';
+    const extra = s === '参加' && (adults || kids) ? `<span class="tile-extra">+同伴者${adults} 子${kids}</span>` : '';
     return `
       <button class="tile ${TILE_CLASS[s]}${selected ? ' selected' : ''}" data-act="tile" data-key="${key}" data-status="${s}">
         <span class="tile-label">${s}</span>
@@ -249,7 +249,7 @@ function summaryBlock(members, key) {
     <div class="summary-block">
       <div class="summary-head">
         <span class="summary-title">${PARTY_LABEL[key]}</span>
-        <span class="summary-total">合計 <b>${c.参加 + adults + kids}</b>人（本人${c.参加}・大人${adults}・子ども${kids}）</span>
+        <span class="summary-total">合計 <b>${c.参加 + adults + kids}</b>人（本人${c.参加}・同伴者${adults}・子ども${kids}）</span>
       </div>
       <div class="tiles">${tiles}</div>
     </div>`;
@@ -266,7 +266,7 @@ function companionRow(m, key) {
         <button data-act="comp" data-name="${esc(m.name)}" data-field="${field}" data-delta="1" aria-label="${label}を増やす">＋</button>
       </span>`;
   };
-  return `<div class="companion"><span class="label">同伴</span>${counter(`${key}Adults`, '大人')}${counter(`${key}Kids`, '子ども')}</div>`;
+  return `<div class="companion"><span class="label">追加</span>${counter(`${key}Adults`, '同伴者')}${counter(`${key}Kids`, '子ども')}</div>`;
 }
 
 function renderAttend() {
