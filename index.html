@@ -29,17 +29,34 @@
     <button class="tab" data-tab="members" role="tab">メンバー</button>
   </nav>
 
+  <div id="class-filter" class="class-filter">
+    <button data-cls="all">全員</button>
+    <button data-cls="1組">1組</button>
+    <button data-cls="2組">2組</button>
+  </div>
+
   <main>
     <section id="tab-call" class="panel"></section>
     <section id="tab-attend" class="panel"></section>
     <section id="tab-members" class="panel">
       <form id="add-form" class="add-form">
-        <input id="add-name" type="text" placeholder="ひらがなで名前を入力" autocomplete="off" enterkeyhint="done">
+        <select id="add-class" class="class-select" aria-label="クラス"></select>
+        <input id="add-last" type="text" placeholder="姓" autocomplete="off" enterkeyhint="next">
+        <input id="add-first" type="text" placeholder="名" autocomplete="off" enterkeyhint="done">
         <button type="submit" class="primary">追加</button>
       </form>
       <p id="add-error" class="error" hidden></p>
-      <p class="hint">同じ名前の人がいる場合は「たなか（営業）」のように括弧で区別してください</p>
-      <ul id="member-list" class="list"></ul>
+
+      <details class="bulk">
+        <summary>まとめて追加</summary>
+        <p class="hint">クラスを選んでから、1行に1人「姓 名」の形で貼り付けてください（例：池田 紀代子）。登録済みの名前は飛ばします</p>
+        <select id="bulk-class" aria-label="クラス"></select>
+        <textarea id="bulk-names" rows="8" placeholder="池田 紀代子&#10;桶野 百子"></textarea>
+        <p id="bulk-error" class="error" hidden></p>
+        <button id="bulk-btn" type="button" class="primary">まとめて追加</button>
+      </details>
+
+      <div id="member-list"></div>
     </section>
   </main>
 
@@ -75,7 +92,11 @@
   <dialog id="edit-dialog">
     <form method="dialog">
       <h2>名前を編集</h2>
-      <input id="edit-name" type="text" autocomplete="off">
+      <select id="edit-class" aria-label="クラス"></select>
+      <div class="name-inputs">
+        <input id="edit-last" type="text" placeholder="姓" autocomplete="off">
+        <input id="edit-first" type="text" placeholder="名" autocomplete="off">
+      </div>
       <p id="edit-error" class="error" hidden></p>
       <div class="dialog-actions">
         <button value="cancel" type="submit">キャンセル</button>
@@ -84,7 +105,12 @@
     </form>
   </dialog>
 
-  <div id="busy" class="busy" hidden>保存中…</div>
+  <div id="busy" class="busy" hidden role="status" aria-live="polite">
+    <div class="busy-box">
+      <div class="spinner"></div>
+      <p id="busy-text">保存中…</p>
+    </div>
+  </div>
   <div id="toast" class="toast" hidden></div>
 
   <script src="config.js"></script>

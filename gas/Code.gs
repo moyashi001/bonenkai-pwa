@@ -4,11 +4,13 @@
 const SHEET_CALL = '声掛け';
 const SHEET_ATTEND = '参加管理';
 const SHEET_INFO = '開催情報';
-const CALL_HEADER = ['名前', '声掛け済み', '声をかけた人', '更新日時'];
-const ATTEND_HEADER = ['名前', '一次会', '二次会', '備考', '更新日時'];
+const CALL_HEADER = ['名前', '声掛け済み', '声をかけた人', '更新日時', 'クラス'];
+const ATTEND_HEADER = ['名前', '一次会', '二次会', '備考', '更新日時', 'クラス'];
+const CALL_CLASS_COL = 5;
+const ATTEND_CLASS_COL = 6;
 const INFO_KEYS = ['日時', '場所', '会費', '回答期限', '二次会の場所'];
 const STATUSES = ['参加', '不参加', '未定'];
-const NAME_RE = /^[ぁ-ゖー]+(（[^（）]+）)?$/;
+const CLASSES = ['1組', '2組'];
 const TZ = 'Asia/Tokyo';
 
 // 初回に1度だけ GAS エディタから実行する
@@ -47,13 +49,14 @@ function doPost(e) {
     if (!action) throw new Error('不明な操作です: ' + req.action);
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
+    let result;
     try {
-      action(sheets_(), req);
+      result = action(sheets_(), req);
       SpreadsheetApp.flush();
     } finally {
       lock.releaseLock();
     }
-    return readState_();
+    return { ...readState_(), result };
   });
 }
 
@@ -70,19 +73,52 @@ function respond_(fn) {
 
 const ACTIONS = {
   add(s, req) {
-    const name = newName_(s, req.name);
-    s.call.appendRow([name, false, '', '']);
-    s.call.getRange(s.call.getLastRow(), 2).insertCheckboxes();
-    s.attend.appendRow([name, '', '', '', '']);
+    const { skipped } = ACTIONS.addMany(s, { names: [req.name], cls: req.cls });
+    if (skipped.length) throw new Error(skipped[0]);
   },
 
+  // 登録済み・形式不正の名前は飛ばし、残りを並び順のまま末尾に追加する
+  addMany(s, req) {
+    const cls = class_(req.cls);
+    const exists = new Set([...dataRows_(s.call), ...dataRows_(s.attend)].map(r => r[0]));
+    const added = [];
+    const skipped = [];
+    (req.names || []).forEach(raw => {
+      let name;
+      try {
+        name = validName_(raw);
+      } catch (err) {
+        skipped.push(`${raw}（${err.message}）`);
+        return;
+      }
+      if (exists.has(name)) {
+        skipped.push(`「${name}」はすでに登録されています`);
+        return;
+      }
+      exists.add(name);
+      added.push(name);
+    });
+    if (added.length) {
+      const callStart = s.call.getLastRow() + 1;
+      s.call.getRange(callStart, 1, added.length, 5).setValues(added.map(n => [n, false, '', '', cls]));
+      s.call.getRange(callStart, 2, added.length, 1).insertCheckboxes();
+      const attendStart = s.attend.getLastRow() + 1;
+      s.attend.getRange(attendStart, 1, added.length, 6).setValues(added.map(n => [n, '', '', '', '', cls]));
+    }
+    return { added: added.length, skipped };
+  },
+
+  // 名前とクラスを変更する
   rename(s, req) {
     const oldName = String(req.oldName);
     requireMember_(s, oldName);
     const name = newName_(s, req.newName, oldName);
-    [s.call, s.attend].forEach(sheet => {
+    const cls = class_(req.cls);
+    [[s.call, CALL_CLASS_COL], [s.attend, ATTEND_CLASS_COL]].forEach(([sheet, classCol]) => {
       const row = findRow_(sheet, oldName);
-      if (row) sheet.getRange(row, 1).setValue(name);
+      if (!row) return;
+      sheet.getRange(row, 1).setValue(name);
+      sheet.getRange(row, classCol).setValue(cls);
     });
     // 「声をかけた人」に書かれた旧名も新しい名前にそろえる
     const last = s.call.getLastRow();
@@ -134,7 +170,15 @@ function sheets_() {
   if (!s.call || !s.attend || !s.info) {
     throw new Error('シートがありません。GASエディタで setup を実行してください');
   }
+  // クラス列がない既存シートには見出しを足す
+  ensureHeader_(s.call, CALL_CLASS_COL, 'クラス');
+  ensureHeader_(s.attend, ATTEND_CLASS_COL, 'クラス');
   return s;
+}
+
+function ensureHeader_(sheet, col, label) {
+  const cell = sheet.getRange(1, col);
+  if (cell.getValue() !== label) cell.setValue(label).setFontWeight('bold');
 }
 
 function readState_() {
@@ -143,7 +187,7 @@ function readState_() {
   const member = name => {
     if (!members.has(name)) {
       members.set(name, {
-        name, called: false, caller: '', calledAt: '',
+        name, cls: '', called: false, caller: '', calledAt: '',
         first: '', second: '', note: '', updatedAt: '',
       });
     }
@@ -154,6 +198,7 @@ function readState_() {
     m.called = r[1] === true;
     m.caller = String(r[2]);
     m.calledAt = r[1] === true ? formatDate_(r[3]) : '';
+    m.cls = String(r[CALL_CLASS_COL - 1] || '');
   });
   dataRows_(s.attend).forEach(r => {
     const m = member(r[0]);
@@ -161,6 +206,7 @@ function readState_() {
     m.second = String(r[2]);
     m.note = String(r[3]);
     m.updatedAt = formatDate_(r[4]);
+    m.cls = m.cls || String(r[ATTEND_CLASS_COL - 1] || '');
   });
   const info = s.info.getDataRange().getDisplayValues().slice(1)
     .filter(([label, value]) => label && value)
@@ -200,20 +246,26 @@ function requireMember_(s, name) {
 }
 
 function newName_(s, raw, exclude) {
-  const name = normalizeName_(raw);
-  if (!NAME_RE.test(name)) throw new Error('名前はひらがなで入力してください');
+  const name = validName_(raw);
   if (name !== exclude && (findRow_(s.call, name) || findRow_(s.attend, name))) {
     throw new Error(`「${name}」はすでに登録されています`);
   }
   return name;
 }
 
-function normalizeName_(s) {
-  return String(s || '')
-    .replace(/\s+/g, '')
-    .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
-    .replace(/\(/g, '（')
-    .replace(/\)/g, '）');
+// 名前は「姓 名」（半角スペース区切り）で保存する
+function validName_(raw) {
+  const name = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!/^\S+ \S+$/.test(name)) throw new Error('姓と名を入力してください');
+  if (/^[=+\-@]/.test(name)) throw new Error('名前の先頭に記号は使えません');
+  if (name.length > 40) throw new Error('名前が長すぎます');
+  return name;
+}
+
+function class_(v) {
+  const s = String(v || '');
+  if (s && !CLASSES.includes(s)) throw new Error('クラスの値が不正です');
+  return s;
 }
 
 function status_(v) {

@@ -2,10 +2,8 @@
 
 const STATUSES = ['参加', '不参加', '未定'];
 const STATUS_CLASS = { 参加: 'yes', 不参加: 'no', 未定: 'maybe' };
-const NAME_RE = /^[ぁ-ゖー]+(（[^（）]+）)?$/;
 const OTHER = '__other__';
-const collator = new Intl.Collator('ja');
-const byName = (a, b) => collator.compare(a.name, b.name);
+const CLASSES = ['1組', '2組'];
 
 const $ = id => document.getElementById(id);
 const el = {
@@ -14,10 +12,18 @@ const el = {
   call: $('tab-call'),
   attend: $('tab-attend'),
   memberList: $('member-list'),
+  classFilter: $('class-filter'),
   addForm: $('add-form'),
-  addName: $('add-name'),
+  addClass: $('add-class'),
+  bulkClass: $('bulk-class'),
+  editClass: $('edit-class'),
+  addLast: $('add-last'),
+  addFirst: $('add-first'),
   addError: $('add-error'),
+  bulkNames: $('bulk-names'),
+  bulkError: $('bulk-error'),
   busy: $('busy'),
+  busyText: $('busy-text'),
   toast: $('toast'),
 };
 
@@ -33,6 +39,7 @@ const store = {
 };
 let myName = store.get('bonenkai.myName');
 let currentTab = store.get('bonenkai.tab') || 'call';
+let currentClass = store.get('bonenkai.class') || 'all';
 // 名前を追加したとき「自分として設定するか」を聞くのは1回だけ
 let askedMyName = false;
 
@@ -41,20 +48,28 @@ function setMyName(name) {
   store.set('bonenkai.myName', name);
 }
 
-// ---- 名前の正規化とチェック ----
-function normalizeName(s) {
-  return s
-    .replace(/\s+/g, '')
-    .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
-    .replace(/\(/g, '（')
-    .replace(/\)/g, '）');
+// ---- 名前（「姓 名」の半角スペース区切りで扱う） ----
+function joinName(last, first) {
+  const strip = s => s.replace(/\s+/g, '');
+  return `${strip(last)} ${strip(first)}`.trim();
+}
+
+function splitName(name) {
+  const i = name.indexOf(' ');
+  return i < 0 ? [name, ''] : [name.slice(0, i), name.slice(i + 1)];
+}
+
+// 一括追加の1行を「姓 名」にする。名が空なら null
+function parseLine(line) {
+  const parts = line.trim().split(/\s+/);
+  return parts.length >= 2 ? `${parts[0]} ${parts.slice(1).join('')}` : null;
 }
 
 function nameError(name, exclude) {
-  if (!name) return '名前を入力してください';
-  if (!NAME_RE.test(name)) return 'ひらがなで入力してください（補足は「たなか（営業）」のように括弧で）';
+  if (!/^\S+ \S+$/.test(name)) return '姓と名を入力してください';
+  if (/^[=+\-@]/.test(name)) return '名前の先頭に記号は使えません';
   if (name !== exclude && state.members.some(m => m.name === name)) {
-    return `⚠ 「${name}」はすでに登録されています。同じ名前の人なら「${name}（営業）」のように区別してください`;
+    return `⚠ 「${name}」はすでに登録されています`;
   }
   return '';
 }
@@ -70,31 +85,37 @@ async function api(action, params = {}) {
   if (!res.ok) throw new Error(`通信エラー (${res.status})`);
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || 'エラーが発生しました');
-  state = json.data;
+  const { result, ...data } = json.data;
+  state = data;
   lastFetched = Date.now();
   render();
+  return result;
 }
 
-async function run(action, params, busyText = '保存中…') {
-  el.busy.textContent = busyText;
+// 成功時は { result } を、失敗時は null を返す
+async function run(action, params = {}) {
+  const loading = action === 'list';
+  el.busyText.textContent = loading ? '読み込み中…' : '保存中…';
   el.busy.hidden = false;
   try {
-    await api(action, params);
-    return true;
+    const result = await api(action, params);
+    if (!loading) toast('保存しました', 'success');
+    return { result };
   } catch (err) {
-    toast(err.message.startsWith('Failed to fetch') ? '通信できませんでした。電波を確認してください' : err.message);
-    return false;
+    toast(err.message.startsWith('Failed to fetch') ? '通信できませんでした。電波を確認してください' : err.message, 'error');
+    return null;
   } finally {
     el.busy.hidden = true;
   }
 }
 
 let toastTimer;
-function toast(message) {
+function toast(message, type) {
   el.toast.textContent = message;
+  el.toast.className = `toast ${type}`;
   el.toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.toast.hidden = true; }, 4000);
+  toastTimer = setTimeout(() => { el.toast.hidden = true; }, type === 'success' ? 1500 : 5000);
 }
 
 // ---- 描画 ----
@@ -102,18 +123,41 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function sortedMembers() {
-  return [...state.members].sort(byName);
-}
-
 function isMember(name) {
   return state.members.some(m => m.name === name);
+}
+
+// ---- クラス ----
+const classOf = m => (CLASSES.includes(m.cls) ? m.cls : '');
+const classLabel = c => c || '未設定';
+
+function visibleMembers() {
+  return currentClass === 'all' ? state.members : state.members.filter(m => classOf(m) === currentClass);
+}
+
+// 「全員」のときはクラスごとの見出しで分け、クラスを選んでいるときはそのまま描画する
+function byClassSections(members, body) {
+  if (currentClass !== 'all') return body(members);
+  return [...CLASSES, '']
+    .map(c => [c, members.filter(m => classOf(m) === c)])
+    .filter(([, list]) => list.length)
+    .map(([c, list]) => `
+      <h2 class="class-title">${classLabel(c)}<span class="count">${list.length}人</span></h2>
+      ${body(list)}`)
+    .join('');
+}
+
+function classOptions(selected) {
+  return [...CLASSES, '']
+    .map(c => `<option value="${c}"${c === selected ? ' selected' : ''}>${classLabel(c)}</option>`)
+    .join('');
 }
 
 function render() {
   renderHeader();
   renderInfo();
   renderTabs();
+  renderClassFilter();
   renderCall();
   renderAttend();
   renderMembers();
@@ -137,41 +181,47 @@ function renderTabs() {
   document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== `tab-${currentTab}`; });
 }
 
+function renderClassFilter() {
+  el.classFilter.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('active', b.dataset.cls === currentClass);
+  });
+}
+
 const EMPTY = '<p class="empty">メンバーがいません。「メンバー」タブから追加してください</p>';
 
 function renderCall() {
-  const members = sortedMembers();
+  const members = visibleMembers();
   if (!members.length) { el.call.innerHTML = EMPTY; return; }
   const group = (title, list, row) => `
-    <h2 class="group-title">${title}<span class="count">${list.length}人</span></h2>
+    <h3 class="group-title">${title}<span class="count">${list.length}人</span></h3>
     <ul class="list">${list.map(row).join('') || '<li class="empty">なし</li>'}</ul>`;
-  el.call.innerHTML =
-    group('まだ声をかけていない', members.filter(m => !m.called), m => `
+  el.call.innerHTML = byClassSections(members, list =>
+    group('まだ声をかけていない', list.filter(m => !m.called), m => `
       <li class="row${m.name === myName ? ' me' : ''}">
         <span class="name">${esc(m.name)}</span>
         <button class="primary small" data-act="call" data-name="${esc(m.name)}">声をかけた</button>
       </li>`) +
-    group('声掛け済み', members.filter(m => m.called), m => `
+    group('声掛け済み', list.filter(m => m.called), m => `
       <li class="row${m.name === myName ? ' me' : ''}">
         <div class="row-main">
           <span class="name">${esc(m.name)}</span>
           <span class="sub">${esc(m.caller)} が声掛け${m.calledAt ? `・${esc(m.calledAt)}` : ''}</span>
         </div>
         <button class="ghost small" data-act="uncall" data-name="${esc(m.name)}">取り消し</button>
-      </li>`);
+      </li>`));
 }
 
-function counts(key) {
+function counts(members, key) {
   const c = { 参加: 0, 不参加: 0, 未定: 0, 未回答: 0 };
-  state.members.forEach(m => { c[STATUSES.includes(m[key]) ? m[key] : '未回答']++; });
+  members.forEach(m => { c[STATUSES.includes(m[key]) ? m[key] : '未回答']++; });
   return c;
 }
 
 function renderAttend() {
-  const members = sortedMembers();
+  const members = visibleMembers();
   if (!members.length) { el.attend.innerHTML = EMPTY; return; }
   const summaryRow = (label, key) => {
-    const c = counts(key);
+    const c = counts(members, key);
     return `<tr><th>${label}</th>${['参加', '不参加', '未定', '未回答'].map(s => `<td>${c[s]}</td>`).join('')}</tr>`;
   };
   const seg = (m, key) => `
@@ -181,10 +231,12 @@ function renderAttend() {
     </div>`;
   el.attend.innerHTML = `
     <table class="summary">
+      <caption>${currentClass === 'all' ? '全員' : currentClass}の集計</caption>
       <thead><tr><th></th><th>参加</th><th>不参加</th><th>未定</th><th>未回答</th></tr></thead>
       <tbody>${summaryRow('一次会', 'first')}${summaryRow('二次会', 'second')}</tbody>
     </table>
-    <ul class="list cards">${members.map(m => `
+    ${byClassSections(members, list => `
+    <ul class="list cards">${list.map(m => `
       <li class="card${m.name === myName ? ' me' : ''}">
         <div class="card-head">
           <span class="name">${esc(m.name)}</span>
@@ -195,19 +247,25 @@ function renderAttend() {
         <input class="note" type="text" maxlength="200" placeholder="備考（遅れて参加 など）"
           data-act="note" data-name="${esc(m.name)}" value="${esc(m.note)}">
       </li>`).join('')}
-    </ul>`;
+    </ul>`)}`;
 }
 
 function renderMembers() {
-  const members = sortedMembers();
-  el.memberList.innerHTML = members.map(m => `
-    <li class="row">
-      <span class="name">${esc(m.name)}</span>
-      <div class="row-actions">
-        <button class="ghost small" data-act="edit" data-name="${esc(m.name)}">編集</button>
-        <button class="danger small" data-act="remove" data-name="${esc(m.name)}">削除</button>
-      </div>
-    </li>`).join('') || '<li class="empty">まだ登録されていません</li>';
+  const members = visibleMembers();
+  if (!members.length) {
+    el.memberList.innerHTML = '<p class="empty">まだ登録されていません</p>';
+    return;
+  }
+  el.memberList.innerHTML = byClassSections(members, list => `
+    <ul class="list">${list.map(m => `
+      <li class="row">
+        <span class="name">${esc(m.name)}</span>
+        <div class="row-actions">
+          <button class="ghost small" data-act="edit" data-name="${esc(m.name)}">編集</button>
+          <button class="danger small" data-act="remove" data-name="${esc(m.name)}">削除</button>
+        </div>
+      </li>`).join('')}
+    </ul>`);
 }
 
 // ---- ダイアログ ----
@@ -227,15 +285,20 @@ function ask(dialog, validate) {
   });
 }
 
+// クラスごとにまとめた選択肢
 function nameOptions(selected) {
-  return sortedMembers()
-    .map(m => `<option value="${esc(m.name)}"${m.name === selected ? ' selected' : ''}>${esc(m.name)}</option>`)
+  return [...CLASSES, '']
+    .map(c => [c, state.members.filter(m => classOf(m) === c)])
+    .filter(([, list]) => list.length)
+    .map(([c, list]) => `<optgroup label="${classLabel(c)}">${list
+      .map(m => `<option value="${esc(m.name)}"${m.name === selected ? ' selected' : ''}>${esc(m.name)}</option>`)
+      .join('')}</optgroup>`)
     .join('');
 }
 
 async function chooseMyName() {
   if (!state.members.length) {
-    toast('先に「メンバー」タブで自分の名前を追加してください');
+    toast('先に「メンバー」タブで自分の名前を追加してください', 'error');
     currentTab = 'members';
     renderTabs();
     return;
@@ -263,26 +326,31 @@ async function recordCall(name) {
   const callerName = () => (select.value === OTHER ? other.value.trim() : select.value);
   const ok = await ask($('caller-dialog'), () => {
     if (callerName()) return true;
-    toast('声をかけた人を選んでください');
+    toast('声をかけた人を選んでください', 'error');
     return false;
   });
   if (ok) await run('call', { name, caller: callerName() });
 }
 
 async function editMember(oldName) {
-  const input = $('edit-name');
+  const last = $('edit-last');
+  const first = $('edit-first');
   const error = $('edit-error');
-  input.value = oldName;
+  const member = state.members.find(m => m.name === oldName);
+  const oldClass = member ? classOf(member) : '';
+  [last.value, first.value] = splitName(oldName);
+  el.editClass.innerHTML = classOptions(oldClass);
   error.hidden = true;
   const ok = await ask($('edit-dialog'), () => {
-    const msg = nameError(normalizeName(input.value), oldName);
+    const msg = nameError(joinName(last.value, first.value), oldName);
     error.textContent = msg;
     error.hidden = !msg;
     return !msg;
   });
-  const newName = normalizeName(input.value);
-  if (!ok || newName === oldName) return;
-  if (await run('rename', { oldName, newName }) && myName === oldName) {
+  const newName = joinName(last.value, first.value);
+  const cls = el.editClass.value;
+  if (!ok || (newName === oldName && cls === oldClass)) return;
+  if (await run('rename', { oldName, newName, cls }) && myName === oldName) {
     setMyName(newName);
     render();
   }
@@ -302,6 +370,25 @@ function saveAttendance(name, changes) {
   // 備考の保存直後に参加可否を押した場合でも備考を巻き戻さないよう、先に手元へ反映する
   Object.assign(m, changes);
   run('attend', { name, first: m.first, second: m.second, note: m.note });
+}
+
+async function bulkAdd() {
+  const lines = el.bulkNames.value.split('\n').filter(l => l.trim());
+  const invalid = lines.filter(l => !parseLine(l));
+  const showError = msg => {
+    el.bulkError.textContent = msg;
+    el.bulkError.hidden = !msg;
+  };
+  if (!lines.length) return showError('名前を貼り付けてください');
+  if (invalid.length) return showError(`姓と名の間にスペースがない行があります：${invalid.join('、')}`);
+  showError('');
+  const res = await run('addMany', { names: lines.map(parseLine), cls: el.bulkClass.value });
+  if (!res) return;
+  const { added, skipped } = res.result;
+  el.bulkNames.value = '';
+  if (skipped.length) {
+    showError(`${added}人を追加しました。次の${skipped.length}件は追加していません：\n${skipped.join('\n')}`);
+  }
 }
 
 // ---- イベント ----
@@ -333,38 +420,57 @@ document.addEventListener('change', e => {
   if (e.target.dataset.act === 'note') saveAttendance(e.target.dataset.name, { note: e.target.value.trim() });
 });
 
-el.addName.addEventListener('input', () => {
-  const msg = el.addName.value ? nameError(normalizeName(el.addName.value)) : '';
-  // 入力途中の「ひらがなで」警告は出さず、重複の警告だけすぐに出す
+// 入力途中は重複の警告だけをすぐに出す
+function checkAddDuplicate() {
+  const msg = nameError(joinName(el.addLast.value, el.addFirst.value));
   el.addError.textContent = msg.startsWith('⚠') ? msg : '';
   el.addError.hidden = !el.addError.textContent;
-});
+}
+el.addLast.addEventListener('input', checkAddDuplicate);
+el.addFirst.addEventListener('input', checkAddDuplicate);
 
 el.addForm.addEventListener('submit', async e => {
   e.preventDefault();
-  const name = normalizeName(el.addName.value);
+  const name = joinName(el.addLast.value, el.addFirst.value);
   const msg = nameError(name);
   el.addError.textContent = msg;
   el.addError.hidden = !msg;
   if (msg) return;
   const askMe = !isMember(myName) && !askedMyName;
   askedMyName = true;
-  if (!(await run('add', { name }))) return;
-  el.addName.value = '';
+  if (!(await run('add', { name, cls: el.addClass.value }))) return;
+  el.addLast.value = '';
+  el.addFirst.value = '';
   if (askMe && confirm(`「${name}」をあなたの名前として設定しますか？`)) {
     setMyName(name);
     render();
   }
 });
 
+el.classFilter.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-cls]');
+  if (!btn) return;
+  currentClass = btn.dataset.cls;
+  store.set('bonenkai.class', currentClass);
+  render();
+});
+
+// 追加先のクラスは、絞り込み中のクラスを初期値にする
+function syncAddClass() {
+  const cls = CLASSES.includes(currentClass) ? currentClass : CLASSES[0];
+  el.addClass.innerHTML = classOptions(cls);
+  el.bulkClass.innerHTML = classOptions(cls);
+}
+el.classFilter.addEventListener('click', syncAddClass);
+syncAddClass();
+
+$('bulk-btn').addEventListener('click', bulkAdd);
 el.me.addEventListener('click', chooseMyName);
-$('refresh-btn').addEventListener('click', () => run('list', {}, '読み込み中…'));
+$('refresh-btn').addEventListener('click', () => run('list'));
 
 // アプリに戻ってきたとき、30秒以上たっていれば最新を取得する
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && Date.now() - lastFetched > 30000) {
-    run('list', {}, '読み込み中…');
-  }
+  if (document.visibilityState === 'visible' && Date.now() - lastFetched > 30000) run('list');
 });
 
 if ('serviceWorker' in navigator) {
@@ -372,6 +478,6 @@ if ('serviceWorker' in navigator) {
 }
 
 render();
-run('list', {}, '読み込み中…').then(ok => {
+run('list').then(ok => {
   if (ok && !isMember(myName) && state.members.length) chooseMyName();
 });
