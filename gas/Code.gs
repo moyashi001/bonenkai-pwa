@@ -4,11 +4,14 @@
 const SHEET_CALL = '声掛け';
 const SHEET_ATTEND = '参加管理';
 const SHEET_INFO = '開催情報';
-const CALL_HEADER = ['名前', '声掛け済み', '声をかけた人', '更新日時', 'クラス'];
+const SHEET_LOG = '変更履歴';
+const CALL_HEADER = ['名前', '声掛け済み', '声をかけた人', '更新日時', 'クラス', '担当'];
 const COMPANION_HEADER = ['一次会大人', '一次会子ども', '二次会大人', '二次会子ども'];
 const COMPANION_KEYS = ['firstAdults', 'firstKids', 'secondAdults', 'secondKids'];
 const ATTEND_HEADER = ['名前', '一次会', '二次会', '備考', '更新日時', 'クラス', ...COMPANION_HEADER];
+const LOG_HEADER = ['日時', '操作', '対象', '内容'];
 const CALL_CLASS_COL = 5;
+const CALL_ASSIGNEE_COL = 6;
 const ATTEND_CLASS_COL = 6;
 const COMPANION_COL = 7;
 const INFO_KEYS = ['日時', '場所', '会費', '回答期限', '二次会の場所'];
@@ -22,6 +25,7 @@ function setup() {
   ensureSheet_(ss, SHEET_CALL, CALL_HEADER);
   const attend = ensureSheet_(ss, SHEET_ATTEND, ATTEND_HEADER);
   const info = ensureSheet_(ss, SHEET_INFO, ['項目', '内容']);
+  ensureSheet_(ss, SHEET_LOG, LOG_HEADER);
   if (info.getLastRow() < 2) {
     info.getRange(2, 1, INFO_KEYS.length, 1).setValues(INFO_KEYS.map(k => [k]));
   }
@@ -103,10 +107,12 @@ const ACTIONS = {
     });
     if (added.length) {
       const callStart = s.call.getLastRow() + 1;
-      s.call.getRange(callStart, 1, added.length, 5).setValues(added.map(n => [n, false, '', '', cls]));
+      s.call.getRange(callStart, 1, added.length, 6).setValues(added.map(n => [n, false, '', '', cls, '']));
       s.call.getRange(callStart, 2, added.length, 1).insertCheckboxes();
       const attendStart = s.attend.getLastRow() + 1;
       s.attend.getRange(attendStart, 1, added.length, 6).setValues(added.map(n => [n, '', '', '', '', cls]));
+      log_(s, 'メンバー追加', added.length === 1 ? added[0] : `${added.length}人`,
+        `${cls || 'クラス未設定'}${added.length > 1 ? '：' + added.join('、') : ''}`);
     }
     return { added: added.length, skipped };
   },
@@ -117,37 +123,60 @@ const ACTIONS = {
     requireMember_(s, oldName);
     const name = newName_(s, req.newName, oldName);
     const cls = class_(req.cls);
+    let oldClass = '';
     [[s.call, CALL_CLASS_COL], [s.attend, ATTEND_CLASS_COL]].forEach(([sheet, classCol]) => {
       const row = findRow_(sheet, oldName);
       if (!row) return;
+      oldClass = oldClass || String(sheet.getRange(row, classCol).getValue());
       sheet.getRange(row, 1).setValue(name);
       sheet.getRange(row, classCol).setValue(cls);
     });
-    // 「声をかけた人」に書かれた旧名も新しい名前にそろえる
-    const last = s.call.getLastRow();
-    if (last >= 2) {
-      const range = s.call.getRange(2, 3, last - 1, 1);
-      range.setValues(range.getValues().map(([c]) => [String(c) === oldName ? name : c]));
-    }
+    // 「声をかけた人」「担当」に書かれた旧名も新しい名前にそろえる
+    [3, CALL_ASSIGNEE_COL].forEach(col => replaceInColumn_(s.call, col, oldName, name));
+    const changes = [];
+    if (name !== oldName) changes.push(`名前：${oldName}→${name}`);
+    if (cls !== oldClass) changes.push(`クラス：${oldClass || '未設定'}→${cls || '未設定'}`);
+    if (changes.length) log_(s, 'メンバー編集', name, changes.join('、'));
   },
 
   remove(s, req) {
+    const name = String(req.name);
+    let removed = false;
     [s.call, s.attend].forEach(sheet => {
-      const row = findRow_(sheet, String(req.name));
-      if (row) sheet.deleteRow(row);
+      const row = findRow_(sheet, name);
+      if (!row) return;
+      sheet.deleteRow(row);
+      removed = true;
     });
+    if (removed) log_(s, 'メンバー削除', name, '');
   },
 
   call(s, req) {
     const caller = safeText_(req.caller, 50);
     if (!caller) throw new Error('声をかけた人を選んでください');
-    const row = callRow_(s, String(req.name));
+    const name = String(req.name);
+    const row = callRow_(s, name);
     s.call.getRange(row, 2, 1, 3).setValues([[true, caller, new Date()]]);
+    log_(s, '声掛け', name, `声をかけた人：${caller}`);
   },
 
   uncall(s, req) {
-    const row = callRow_(s, String(req.name));
+    const name = String(req.name);
+    const row = callRow_(s, name);
+    const caller = s.call.getRange(row, 3).getValue();
     s.call.getRange(row, 2, 1, 3).setValues([[false, '', new Date()]]);
+    log_(s, '声掛け取消', name, caller ? `取り消した記録：${caller}` : '');
+  },
+
+  // 声掛けの担当を設定する（空なら担当を外す）
+  assign(s, req) {
+    const name = String(req.name);
+    const assignee = safeText_(req.assignee, 50);
+    const row = callRow_(s, name);
+    const cell = s.call.getRange(row, CALL_ASSIGNEE_COL);
+    const before = String(cell.getValue());
+    cell.setValue(assignee);
+    log_(s, assignee ? '担当設定' : '担当解除', name, `${before || 'なし'}→${assignee || 'なし'}`);
   },
 
   attend(s, req) {
@@ -155,7 +184,7 @@ const ACTIONS = {
     requireMember_(s, name);
     const first = status_(req.first);
     const second = status_(req.second);
-    const values = [first, second, safeText_(req.note, 200), new Date()];
+    const note = safeText_(req.note, 200);
     // 同伴者は「参加」のときだけ数える
     const companions = COMPANION_KEYS.map(k =>
       (k.startsWith('first') ? first : second) === '参加' ? count_(req[k]) : 0);
@@ -164,8 +193,22 @@ const ACTIONS = {
       s.attend.appendRow([name]);
       row = s.attend.getLastRow();
     }
-    s.attend.getRange(row, 2, 1, 4).setValues([values]);
+    const [oldFirst, oldSecond, oldNote] = s.attend.getRange(row, 2, 1, 3).getValues()[0].map(String);
+    const oldCompanions = s.attend.getRange(row, COMPANION_COL, 1, companions.length).getValues()[0].map(v => Number(v) || 0);
+    s.attend.getRange(row, 2, 1, 4).setValues([[first, second, note, new Date()]]);
     s.attend.getRange(row, COMPANION_COL, 1, companions.length).setValues([companions]);
+
+    const party = (status, adults, kids) => (status || '未回答') +
+      (status === '参加' && (adults || kids) ? `（同伴者${adults}・子ども${kids}）` : '');
+    const changes = [];
+    const before1 = party(oldFirst, oldCompanions[0], oldCompanions[1]);
+    const after1 = party(first, companions[0], companions[1]);
+    if (before1 !== after1) changes.push(`一次会：${before1}→${after1}`);
+    const before2 = party(oldSecond, oldCompanions[2], oldCompanions[3]);
+    const after2 = party(second, companions[2], companions[3]);
+    if (before2 !== after2) changes.push(`二次会：${before2}→${after2}`);
+    if (oldNote !== note) changes.push(`備考：「${oldNote}」→「${note}」`);
+    if (changes.length) log_(s, '参加可否', name, changes.join('、'));
   },
 };
 
@@ -179,9 +222,10 @@ function sheets_() {
   if (!s.call || !s.attend || !s.info) {
     throw new Error('シートがありません。GASエディタで setup を実行してください');
   }
-  // 後から追加した列（クラス・同伴者）の見出しがない既存シートには見出しを足す
+  // 後から追加した列（クラス・同伴者・担当）の見出しがない既存シートには見出しを足す
   ensureHeader_(s.call, CALL_HEADER);
   ensureHeader_(s.attend, ATTEND_HEADER);
+  s.log = ensureSheet_(ss, SHEET_LOG, LOG_HEADER);
   return s;
 }
 
@@ -192,13 +236,26 @@ function ensureHeader_(sheet, header) {
   }
 }
 
+// 変更履歴は新しいものが上に来るよう、見出しの直下に挿入する
+function log_(s, op, target, detail) {
+  s.log.insertRowAfter(1);
+  s.log.getRange(2, 1, 1, 4).setValues([[new Date(), op, safeText_(target, 100), safeText_(detail, 1000)]]);
+}
+
+function replaceInColumn_(sheet, col, from, to) {
+  const last = sheet.getLastRow();
+  if (last < 2) return;
+  const range = sheet.getRange(2, col, last - 1, 1);
+  range.setValues(range.getValues().map(([v]) => [String(v) === from ? to : v]));
+}
+
 function readState_() {
   const s = sheets_();
   const members = new Map();
   const member = name => {
     if (!members.has(name)) {
       members.set(name, {
-        name, cls: '', called: false, caller: '', calledAt: '',
+        name, cls: '', called: false, caller: '', calledAt: '', assignee: '',
         first: '', second: '', note: '', updatedAt: '',
         firstAdults: 0, firstKids: 0, secondAdults: 0, secondKids: 0,
       });
@@ -211,6 +268,7 @@ function readState_() {
     m.caller = String(r[2]);
     m.calledAt = r[1] === true ? formatDate_(r[3]) : '';
     m.cls = String(r[CALL_CLASS_COL - 1] || '');
+    m.assignee = String(r[CALL_ASSIGNEE_COL - 1] || '');
   });
   dataRows_(s.attend).forEach(r => {
     const m = member(r[0]);

@@ -76,8 +76,7 @@ input[type="text"], input[type="search"], select, textarea {
   color: var(--accent-text);
 }
 .app-header h1 { margin: 0; font-size: 18px; }
-.header-actions { display: flex; gap: 8px; }
-.chip, .icon-btn {
+.icon-btn {
   background: rgba(255, 255, 255, 0.18);
   border-color: transparent;
   color: var(--accent-text);
@@ -143,7 +142,7 @@ main { padding: 0 16px 32px; }
 .row-actions { display: flex; gap: 6px; }
 .name { font-weight: 600; overflow-wrap: anywhere; }
 .sub { font-size: 13px; color: var(--muted); }
-.me { background: var(--me); }
+.sub.assigned { color: var(--accent); font-weight: 600; }
 .empty { color: var(--muted); font-size: 14px; padding: 8px 2px; }
 
 .search { margin: 10px 16px 0; }
@@ -192,6 +191,25 @@ main { padding: 0 16px 32px; }
 }
 .filter-chip button { padding: 4px 10px; font-size: 13px; flex-shrink: 0; }
 
+.share-btn { width: 100%; margin: 4px 0 8px; padding: 10px; font-weight: 600; }
+
+/* 人を選ぶダイアログ：説明文は固定し、名前の一覧だけスクロールする */
+.pick-dialog { max-height: 90vh; padding: 16px; }
+.pick-dialog form { display: flex; flex-direction: column; max-height: calc(90vh - 32px); }
+.pick-dialog h2 { margin-bottom: 4px; }
+.pick-prompt { margin: 0 0 10px; padding: 8px 10px; background: var(--me); border-radius: 8px; font-weight: 700; font-size: 15px; }
+.pick-dialog input[type="search"] { margin: 0 0 8px; }
+.pick-list { flex: 1; min-height: 120px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 4px 8px 8px; }
+.pick-class { margin: 8px 0 4px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.pick-names { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick-name { padding: 6px 10px; font-size: 14px; border-radius: 999px; }
+.pick-name.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
+.pick-other { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.pick-other input[type="text"] { margin-top: 4px; }
+.pick-selected { min-height: 1.5em; margin: 8px 0 0; font-weight: 700; color: var(--accent); }
+.pick-dialog .dialog-actions { margin-top: 8px; flex-wrap: wrap; }
+#pick-clear { margin-right: auto; }
+
 /* 同伴者 */
 .companion { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin: -2px 0 10px; font-size: 14px; }
 .companion .label { width: 3.5em; flex-shrink: 0; color: var(--muted); margin-right: -4px; }
@@ -208,7 +226,6 @@ main { padding: 0 16px 32px; }
   border-radius: 12px;
   margin-bottom: 10px;
 }
-.card.me { background: var(--me); }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .status-row .label { width: 3.5em; flex-shrink: 0; font-size: 14px; color: var(--muted); }

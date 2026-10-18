@@ -15,10 +15,7 @@
 <body>
   <header class="app-header">
     <h1>忘年会 参加管理</h1>
-    <div class="header-actions">
-      <button id="me-btn" class="chip" type="button"></button>
-      <button id="refresh-btn" class="icon-btn" type="button" aria-label="更新">⟳</button>
-    </div>
+    <button id="refresh-btn" class="icon-btn" type="button" aria-label="更新">⟳</button>
   </header>
 
   <section id="info" class="info" hidden></section>
@@ -64,30 +61,21 @@
     </section>
   </main>
 
-  <!-- 声をかけた人の選択 -->
-  <dialog id="caller-dialog">
+  <!-- 人の選択（声をかけた人・担当） -->
+  <dialog id="pick-dialog" class="pick-dialog">
     <form method="dialog">
-      <h2 id="caller-title"></h2>
-      <label>声をかけた人
-        <select id="caller-select"></select>
+      <h2 id="pick-title"></h2>
+      <p id="pick-prompt" class="pick-prompt"></p>
+      <input id="pick-search" type="search" placeholder="🔍 名前で検索" autocomplete="off">
+      <div id="pick-list" class="pick-list"></div>
+      <label class="pick-other">一覧にいない場合
+        <input id="pick-other" type="text" placeholder="名前を入力" autocomplete="off">
       </label>
-      <input id="caller-other" type="text" placeholder="名前を入力" hidden>
+      <p id="pick-selected" class="pick-selected"></p>
       <div class="dialog-actions">
+        <button id="pick-clear" value="clear" type="submit" class="danger" hidden>担当を外す</button>
         <button value="cancel" type="submit">キャンセル</button>
-        <button value="ok" type="submit" class="primary">記録する</button>
-      </div>
-    </form>
-  </dialog>
-
-  <!-- 自分の名前の選択 -->
-  <dialog id="me-dialog">
-    <form method="dialog">
-      <h2>あなたの名前</h2>
-      <p class="hint">選んだ名前は「声をかけた人」の初期値になります（この端末に保存）</p>
-      <select id="me-select"></select>
-      <div class="dialog-actions">
-        <button value="cancel" type="submit">キャンセル</button>
-        <button value="ok" type="submit" class="primary">決定</button>
+        <button id="pick-ok" value="ok" type="submit" class="primary"></button>
       </div>
     </form>
   </dialog>

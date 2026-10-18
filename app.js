@@ -2,12 +2,10 @@
 
 const STATUSES = ['参加', '不参加', '未定'];
 const STATUS_CLASS = { 参加: 'yes', 不参加: 'no', 未定: 'maybe' };
-const OTHER = '__other__';
 const CLASSES = ['1組', '2組'];
 
 const $ = id => document.getElementById(id);
 const el = {
-  me: $('me-btn'),
   info: $('info'),
   call: $('tab-call'),
   attend: $('tab-attend'),
@@ -37,19 +35,13 @@ const store = {
     try { value ? localStorage.setItem(key, value) : localStorage.removeItem(key); } catch { /* 保存できなくても動作は続ける */ }
   },
 };
-let myName = store.get('bonenkai.myName');
 let currentTab = store.get('bonenkai.tab') || 'call';
 let currentClass = store.get('bonenkai.class') || 'all';
 let searchQuery = '';
 // 集計タイルでの絞り込み（{ key: 'first' | 'second', status }）
 let attendFilter = null;
-// 名前を追加したとき「自分として設定するか」を聞くのは1回だけ
-let askedMyName = false;
-
-function setMyName(name) {
-  myName = name;
-  store.set('bonenkai.myName', name);
-}
+// 前回「声をかけた人」「担当」で選んだ人。次回の初期値にする
+let lastPicked = store.get('bonenkai.lastPicked');
 
 // ---- 名前（「姓 名」の半角スペース区切りで扱う） ----
 function joinName(last, first) {
@@ -169,17 +161,12 @@ function classOptions(selected) {
 }
 
 function render() {
-  renderHeader();
   renderInfo();
   renderTabs();
   renderClassFilter();
   renderCall();
   renderAttend();
   renderMembers();
-}
-
-function renderHeader() {
-  el.me.textContent = myName && isMember(myName) ? `👤 ${myName}` : '👤 名前を選ぶ';
 }
 
 function renderInfo() {
@@ -210,12 +197,18 @@ function renderCall() {
     <ul class="list">${list.map(row).join('') || '<li class="empty">なし</li>'}</ul>`;
   el.call.innerHTML = byClassSections(members, list =>
     group('まだ声をかけていない', list.filter(m => !m.called), m => `
-      <li class="row${m.name === myName ? ' me' : ''}">
-        <span class="name">${esc(m.name)}</span>
-        <button class="primary small" data-act="call" data-name="${esc(m.name)}">声をかけた</button>
+      <li class="row">
+        <div class="row-main">
+          <span class="name">${esc(m.name)}</span>
+          <span class="sub${m.assignee ? ' assigned' : ''}">${m.assignee ? `担当：${esc(m.assignee)}` : '担当なし'}</span>
+        </div>
+        <div class="row-actions">
+          <button class="ghost small" data-act="assign" data-name="${esc(m.name)}">担当</button>
+          <button class="primary small" data-act="call" data-name="${esc(m.name)}">声をかけた</button>
+        </div>
       </li>`) +
     group('声掛け済み', list.filter(m => m.called), m => `
-      <li class="row${m.name === myName ? ' me' : ''}">
+      <li class="row">
         <div class="row-main">
           <span class="name">${esc(m.name)}</span>
           <span class="sub">${esc(m.caller)} が声掛け${m.calledAt ? `・${esc(m.calledAt)}` : ''}</span>
@@ -288,9 +281,10 @@ function renderAttend() {
     ${summaryBlock(classMembers(), 'first')}
     ${summaryBlock(classMembers(), 'second')}
     ${filterChip}
+    <button class="share-btn" data-act="share">📤 ${attendFilter ? 'この一覧' : '集計'}をLINEなどで共有</button>
     ${members.length ? byClassSections(members, list => `
     <ul class="list cards">${list.map(m => `
-      <li class="card${m.name === myName ? ' me' : ''}">
+      <li class="card">
         <div class="card-head">
           <span class="name">${esc(m.name)}</span>
           ${m.updatedAt ? `<span class="sub">更新 ${esc(m.updatedAt)}</span>` : ''}
@@ -324,7 +318,7 @@ function renderMembers() {
 }
 
 // ---- ダイアログ ----
-// validate が false を返すと閉じずに入力を続けてもらう
+// 押されたボタンの value（'ok' / 'cancel' など）を返す。validate が false を返すと閉じずに入力を続けてもらう
 function ask(dialog, validate) {
   return new Promise(resolve => {
     const onSubmit = e => {
@@ -333,58 +327,162 @@ function ask(dialog, validate) {
     dialog.addEventListener('submit', onSubmit);
     dialog.addEventListener('close', () => {
       dialog.removeEventListener('submit', onSubmit);
-      resolve(dialog.returnValue === 'ok');
+      resolve(dialog.returnValue);
     }, { once: true });
     dialog.returnValue = '';
     dialog.showModal();
   });
 }
 
-// クラスごとにまとめた選択肢
-function nameOptions(selected) {
-  return [...CLASSES, '']
-    .map(c => [c, state.members.filter(m => classOf(m) === c)])
+// 人を選ぶダイアログ。名前ボタンの一覧から選ぶか、一覧にいない人は自由入力する
+const pick = {
+  dialog: $('pick-dialog'),
+  search: $('pick-search'),
+  list: $('pick-list'),
+  other: $('pick-other'),
+  selectedText: $('pick-selected'),
+  selected: '',
+};
+
+function renderPickList() {
+  const q = compact(pick.search.value);
+  const members = state.members.filter(m => !q || compact(m.name).includes(q));
+  pick.list.innerHTML = [...CLASSES, '']
+    .map(c => [c, members.filter(m => classOf(m) === c)])
     .filter(([, list]) => list.length)
-    .map(([c, list]) => `<optgroup label="${classLabel(c)}">${list
-      .map(m => `<option value="${esc(m.name)}"${m.name === selected ? ' selected' : ''}>${esc(m.name)}</option>`)
-      .join('')}</optgroup>`)
-    .join('');
+    .map(([c, list]) => `
+      <p class="pick-class">${classLabel(c)}</p>
+      <div class="pick-names">${list.map(m => `
+        <button type="button" class="pick-name${m.name === pick.selected ? ' on' : ''}" data-pick="${esc(m.name)}">${esc(m.name)}</button>`).join('')}
+      </div>`)
+    .join('') || '<p class="empty">該当する名前がありません</p>';
+  pick.selectedText.textContent = pick.selected ? `選択中：${pick.selected}` : '';
 }
 
-async function chooseMyName() {
-  if (!state.members.length) {
-    toast('先に「メンバー」タブで自分の名前を追加してください', 'error');
-    currentTab = 'members';
-    renderTabs();
-    return;
+pick.list.addEventListener('click', e => {
+  const btn = e.target.closest('[data-pick]');
+  if (!btn) return;
+  pick.selected = btn.dataset.pick;
+  pick.other.value = '';
+  renderPickList();
+});
+pick.search.addEventListener('input', renderPickList);
+pick.other.addEventListener('input', () => {
+  pick.selected = pick.other.value.trim();
+  renderPickList();
+});
+// 入力欄で Enter を押してもダイアログが閉じないようにする
+[pick.search, pick.other].forEach(input => input.addEventListener('keydown', e => {
+  if (e.key === 'Enter') e.preventDefault();
+}));
+
+// 戻り値：{ action: 'ok' | 'clear', name } またはキャンセル時 null
+async function pickPerson({ title, prompt, okLabel, initial, clearable }) {
+  $('pick-title').textContent = title;
+  $('pick-prompt').textContent = prompt;
+  $('pick-ok').textContent = okLabel;
+  $('pick-clear').hidden = !clearable;
+  pick.search.value = '';
+  pick.other.value = '';
+  pick.selected = initial || '';
+  if (pick.selected && !isMember(pick.selected)) pick.other.value = pick.selected;
+  renderPickList();
+  pick.list.scrollTop = 0;
+  const action = await ask(pick.dialog, () => {
+    if (pick.selected) return true;
+    toast('名前を選んでください', 'error');
+    return false;
+  });
+  if (action !== 'ok' && action !== 'clear') return null;
+  if (action === 'ok') {
+    lastPicked = pick.selected;
+    store.set('bonenkai.lastPicked', lastPicked);
   }
-  const select = $('me-select');
-  select.innerHTML = `<option value="">（選んでください）</option>${nameOptions(myName)}`;
-  if (await ask($('me-dialog'))) {
-    setMyName(select.value);
-    render();
-  }
+  return { action, name: pick.selected };
 }
 
 async function recordCall(name) {
-  const select = $('caller-select');
-  const other = $('caller-other');
-  const defaultCaller = isMember(myName) ? myName : '';
-  $('caller-title').textContent = `${name} さんに声をかけた`;
-  select.innerHTML = `<option value="">（選んでください）</option>${nameOptions(defaultCaller)}<option value="${OTHER}">その他（自由入力）</option>`;
-  other.value = '';
-  other.hidden = true;
-  select.onchange = () => {
-    other.hidden = select.value !== OTHER;
-    if (!other.hidden) other.focus();
-  };
-  const callerName = () => (select.value === OTHER ? other.value.trim() : select.value);
-  const ok = await ask($('caller-dialog'), () => {
-    if (callerName()) return true;
-    toast('声をかけた人を選んでください', 'error');
-    return false;
+  const m = state.members.find(x => x.name === name);
+  const picked = await pickPerson({
+    title: `${name} さんに声をかけた`,
+    prompt: '声をかけたのは誰ですか？（あなたの名前を選んでください）',
+    okLabel: '記録する',
+    initial: m?.assignee || lastPicked,
   });
-  if (ok) await run('call', { name, caller: callerName() });
+  if (picked) await run('call', { name, caller: picked.name });
+}
+
+async function assignCall(name) {
+  const m = state.members.find(x => x.name === name);
+  const picked = await pickPerson({
+    title: `${name} さんの担当`,
+    prompt: '声をかける担当の人を選んでください',
+    okLabel: '担当にする',
+    initial: m?.assignee || lastPicked,
+    clearable: Boolean(m?.assignee),
+  });
+  if (picked) await run('assign', { name, assignee: picked.action === 'clear' ? '' : picked.name });
+}
+
+// ---- 共有 ----
+function companionText(m, key) {
+  const adults = Number(m[`${key}Adults`]) || 0;
+  const kids = Number(m[`${key}Kids`]) || 0;
+  if (!adults && !kids) return '';
+  return `（${[adults && `同伴者${adults}`, kids && `子ども${kids}`].filter(Boolean).join('・')}）`;
+}
+
+function shareText() {
+  const members = classMembers();
+  const scope = currentClass === 'all' ? '' : `${currentClass} `;
+  const lines = [];
+  if (attendFilter) {
+    const { key, status } = attendFilter;
+    const list = members.filter(m => statusOf(m, key) === status);
+    lines.push(`【忘年会】${scope}${PARTY_LABEL[key]}・${status}（${list.length}人）`);
+    if (status === '参加') {
+      const adults = sum(list, `${key}Adults`);
+      const kids = sum(list, `${key}Kids`);
+      lines.push(`合計${list.length + adults + kids}人（本人${list.length}・同伴者${adults}・子ども${kids}）`);
+    }
+    [...CLASSES, ''].forEach(c => {
+      const group = list.filter(m => classOf(m) === c);
+      if (!group.length) return;
+      if (currentClass === 'all') lines.push('', `■${classLabel(c)}`);
+      group.forEach(m => {
+        const extra = status === '参加' ? companionText(m, key) : '';
+        lines.push(`・${m.name}${extra}${m.note ? ` ※${m.note}` : ''}`);
+      });
+    });
+  } else {
+    lines.push(`【忘年会 参加状況】${scope}`.trim());
+    ['first', 'second'].forEach(key => {
+      const joined = members.filter(m => statusOf(m, key) === '参加');
+      const total = joined.length + sum(joined, `${key}Adults`) + sum(joined, `${key}Kids`);
+      const count = s => members.filter(m => statusOf(m, key) === s).length;
+      lines.push(`${PARTY_LABEL[key]}：参加${joined.length}人（同伴含め${total}人）／不参加${count('不参加')}／未定${count('未定')}／未回答${count('未回答')}`);
+    });
+  }
+  lines.push('', `回答・確認はこちら：${location.origin}${location.pathname}`);
+  return lines.join('\n');
+}
+
+async function shareList() {
+  const text = shareText();
+  if (navigator.share) {
+    try {
+      await navigator.share({ text });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('コピーしました。LINEなどに貼り付けてください', 'success');
+  } catch {
+    toast('共有できませんでした', 'error');
+  }
 }
 
 async function editMember(oldName) {
@@ -401,22 +499,16 @@ async function editMember(oldName) {
     error.textContent = msg;
     error.hidden = !msg;
     return !msg;
-  });
+  }) === 'ok';
   const newName = joinName(last.value, first.value);
   const cls = el.editClass.value;
   if (!ok || (newName === oldName && cls === oldClass)) return;
-  if (await run('rename', { oldName, newName, cls }) && myName === oldName) {
-    setMyName(newName);
-    render();
-  }
+  await run('rename', { oldName, newName, cls });
 }
 
 async function removeMember(name) {
   if (!confirm(`「${name}」を削除しますか？\n声掛け・参加可否の記録も消えます。`)) return;
-  if (await run('remove', { name }) && myName === name) {
-    setMyName('');
-    render();
-  }
+  await run('remove', { name });
 }
 
 function saveAttendance(name, changes) {
@@ -467,6 +559,8 @@ document.addEventListener('click', e => {
   if (!btn) return;
   const { act, name } = btn.dataset;
   if (act === 'call') recordCall(name);
+  else if (act === 'assign') assignCall(name);
+  else if (act === 'share') shareList();
   else if (act === 'uncall') {
     if (confirm(`「${name}」の声掛けを取り消しますか？`)) run('uncall', { name });
   } else if (act === 'status') {
@@ -516,15 +610,9 @@ el.addForm.addEventListener('submit', async e => {
   el.addError.textContent = msg;
   el.addError.hidden = !msg;
   if (msg) return;
-  const askMe = !isMember(myName) && !askedMyName;
-  askedMyName = true;
   if (!(await run('add', { name, cls: el.addClass.value }))) return;
   el.addLast.value = '';
   el.addFirst.value = '';
-  if (askMe && confirm(`「${name}」をあなたの名前として設定しますか？`)) {
-    setMyName(name);
-    render();
-  }
 });
 
 el.classFilter.addEventListener('click', e => {
@@ -552,7 +640,6 @@ $('search').addEventListener('input', e => {
 });
 
 $('bulk-btn').addEventListener('click', bulkAdd);
-el.me.addEventListener('click', chooseMyName);
 $('refresh-btn').addEventListener('click', () => run('list'));
 
 // アプリに戻ってきたとき、30秒以上たっていれば最新を取得する
@@ -565,6 +652,4 @@ if ('serviceWorker' in navigator) {
 }
 
 render();
-run('list').then(ok => {
-  if (ok && !isMember(myName) && state.members.length) chooseMyName();
-});
+run('list');
