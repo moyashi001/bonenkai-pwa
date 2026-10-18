@@ -25,7 +25,7 @@ const el = {
   toast: $('toast'),
 };
 
-let state = { members: [], info: [] };
+let state = { members: [], info: [], eventName: '' };
 let lastFetched = 0;
 
 // ---- 端末に保存する値（保存できない環境でも動くように try で包む） ----
@@ -160,13 +160,23 @@ function classOptions(selected) {
     .join('');
 }
 
+// イベント名は「開催情報」シートの「イベント名」で変えられる
+const eventLabel = () => state.eventName || '参加管理';
+
 function render() {
+  renderTitle();
   renderInfo();
   renderTabs();
   renderClassFilter();
   renderCall();
   renderAttend();
   renderMembers();
+}
+
+function renderTitle() {
+  const title = state.eventName ? `${state.eventName} 参加管理` : '参加管理';
+  $('app-title').textContent = title;
+  document.title = title;
 }
 
 function renderInfo() {
@@ -439,7 +449,7 @@ function shareText() {
   if (attendFilter) {
     const { key, status } = attendFilter;
     const list = members.filter(m => statusOf(m, key) === status);
-    lines.push(`【忘年会】${scope}${PARTY_LABEL[key]}・${status}（${list.length}人）`);
+    lines.push(`【${eventLabel()}】${scope}${PARTY_LABEL[key]}・${status}（${list.length}人）`);
     if (status === '参加') {
       const adults = sum(list, `${key}Adults`);
       const kids = sum(list, `${key}Kids`);
@@ -455,7 +465,7 @@ function shareText() {
       });
     });
   } else {
-    lines.push(`【忘年会 参加状況】${scope}`.trim());
+    lines.push(`【${state.eventName ? `${state.eventName} ` : ''}参加状況】${scope}`.trim());
     ['first', 'second'].forEach(key => {
       const joined = members.filter(m => statusOf(m, key) === '参加');
       const total = joined.length + sum(joined, `${key}Adults`) + sum(joined, `${key}Kids`);

@@ -1,4 +1,4 @@
-// 忘年会 参加管理 - Google Apps Script
+// イベント参加管理（同窓会・忘年会など） - Google Apps Script
 // スプレッドシートの「拡張機能 > Apps Script」に貼り付けて使う
 
 const SHEET_CALL = '声掛け';
@@ -14,7 +14,8 @@ const CALL_CLASS_COL = 5;
 const CALL_ASSIGNEE_COL = 6;
 const ATTEND_CLASS_COL = 6;
 const COMPANION_COL = 7;
-const INFO_KEYS = ['日時', '場所', '会費', '回答期限', '二次会の場所'];
+const EVENT_NAME_KEY = 'イベント名';
+const INFO_KEYS = [EVENT_NAME_KEY, '日時', '場所', '会費', '回答期限', '二次会の場所'];
 const STATUSES = ['参加', '不参加', '未定'];
 const CLASSES = ['1組', '2組'];
 const TZ = 'Asia/Tokyo';
@@ -226,7 +227,17 @@ function sheets_() {
   ensureHeader_(s.call, CALL_HEADER);
   ensureHeader_(s.attend, ATTEND_HEADER);
   s.log = ensureSheet_(ss, SHEET_LOG, LOG_HEADER);
+  ensureEventNameRow_(s.info);
   return s;
+}
+
+// 「イベント名」の行がない既存の開催情報シートには、先頭に空の行を足す
+function ensureEventNameRow_(info) {
+  const last = info.getLastRow();
+  const labels = last >= 2 ? info.getRange(2, 1, last - 1, 1).getValues().map(r => String(r[0])) : [];
+  if (labels.includes(EVENT_NAME_KEY)) return;
+  info.insertRowAfter(1);
+  info.getRange(2, 1, 1, 2).setValues([[EVENT_NAME_KEY, '']]);
 }
 
 function ensureHeader_(sheet, header) {
@@ -279,10 +290,12 @@ function readState_() {
     m.cls = m.cls || String(r[ATTEND_CLASS_COL - 1] || '');
     COMPANION_KEYS.forEach((k, i) => { m[k] = Number(r[COMPANION_COL - 1 + i]) || 0; });
   });
-  const info = s.info.getDataRange().getDisplayValues().slice(1)
-    .filter(([label, value]) => label && value)
+  const rows = s.info.getDataRange().getDisplayValues().slice(1);
+  const eventName = (rows.find(([label]) => label === EVENT_NAME_KEY) || [])[1] || '';
+  const info = rows
+    .filter(([label, value]) => label && value && label !== EVENT_NAME_KEY)
     .map(([label, value]) => ({ label, value }));
-  return { members: [...members.values()], info };
+  return { members: [...members.values()], info, eventName };
 }
 
 function dataRows_(sheet) {

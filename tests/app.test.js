@@ -26,14 +26,14 @@ const defaultMembers = () => [
 ];
 
 // app.js を読み込み、初回の読み込みが終わるまで待つ
-async function loadApp({ members = defaultMembers(), result } = {}) {
+async function loadApp({ members = defaultMembers(), result, eventName = '同窓会' } = {}) {
   const dom = new JSDOM(HTML, { runScripts: 'outside-only', url: 'https://bonenkai-pwa.vercel.app/' });
   const w = dom.window;
   const ctx = { w, d: w.document, sent: [], confirms: [], shared: null, members };
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.fetch = async (url, opts) => {
     if (opts) ctx.sent.push(JSON.parse(opts.body));
-    return { ok: true, json: async () => ({ ok: true, data: { members, info: [], result: opts ? result : undefined } }) };
+    return { ok: true, json: async () => ({ ok: true, data: { members, info: [], eventName, result: opts ? result : undefined } }) };
   };
   w.GAS_URL = 'https://script.google.com/macros/s/test/exec';
   w.confirm = message => { ctx.confirms.push(message); return true; };
@@ -56,6 +56,14 @@ const type = (ctx, id, value) => {
   input.value = value;
   input.dispatchEvent(new ctx.w.Event('input'));
 };
+
+test('イベント名をタイトルに表示し、未設定なら「参加管理」だけにする', async () => {
+  const { d } = await loadApp();
+  assert.equal(d.getElementById('app-title').textContent, '同窓会 参加管理');
+  assert.equal(d.title, '同窓会 参加管理');
+  const { d: d2 } = await loadApp({ eventName: '' });
+  assert.equal(d2.getElementById('app-title').textContent, '参加管理');
+});
 
 test('全員表示ではクラスごとの見出しで分け、クラスを選ぶとそのクラスだけ表示する', async () => {
   const { d } = await loadApp({ members: [...defaultMembers(), member('てすと たろう', '')] });
@@ -168,13 +176,14 @@ test('共有テキストは絞り込み中なら一覧、そうでなければ�
   const { d } = ctx;
   d.querySelector('[data-act="share"]').click();
   await tick();
+  assert.match(ctx.shared, /^【同窓会 参加状況】/);
   assert.match(ctx.shared, /一次会：参加2人（同伴含め5人）／不参加1／未定0／未回答1/);
   assert.match(ctx.shared, /回答・確認はこちら：https:\/\/bonenkai-pwa\.vercel\.app\//);
 
   d.querySelector('.tile[data-key="first"][data-status="参加"]').click();
   d.querySelector('[data-act="share"]').click();
   await tick();
-  assert.match(ctx.shared, /【忘年会】一次会・参加（2人）/);
+  assert.match(ctx.shared, /【同窓会】一次会・参加（2人）/);
   assert.match(ctx.shared, /・池田 紀代子（同伴者1・子ども2） ※遅れます/);
   assert.match(ctx.shared, /■2組\n・甲斐 敦子/);
 });

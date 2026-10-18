@@ -1,6 +1,6 @@
 {
-  "name": "忘年会 参加管理",
-  "short_name": "忘年会",
+  "name": "参加管理",
+  "short_name": "参加管理",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
