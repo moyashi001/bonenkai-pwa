@@ -11,14 +11,13 @@ PWA（Vercel: https://bonenkai-pwa.vercel.app/） ⇄ GAS（Webアプリ） ⇄ 
 
 ### 1. スプレッドシートと GAS
 1. Google ドライブで新しいスプレッドシートを作成する
-2. 「拡張機能 > Apps Script」を開き、`gas/Code.gs` の内容を貼り付けて保存する
-3. 関数 `setup` を選んで「実行」する（初回は権限の承認が必要）
+2. GAS は [clasp](https://github.com/google/clasp) で反映する（初回は https://script.google.com/home/usersettings で「Google Apps Script API」をオンにし、`npx @google/clasp login`）
+   - 「拡張機能 > Apps Script」の ⚙「プロジェクトの設定」にあるスクリプトIDを、このフォルダの `.clasp.json`（`scriptId` と `"rootDir": "gas"`）に書く。`.clasp.json` は公開しないため `.gitignore` で除外している
+   - `npx @google/clasp push --force` で `gas/` の内容を反映する
+3. GAS エディタで関数 `setup` を選んで「実行」する（初回は権限の承認が必要）
    - 「声掛け」「参加管理」「開催情報」「変更履歴」のシートが作られる
-4. 「デプロイ > 新しいデプロイ」から次の設定でデプロイする
-   - 種類：ウェブアプリ
-   - 次のユーザーとして実行：自分
-   - アクセスできるユーザー：全員
-5. 表示された URL（末尾が `/exec`）をコピーする
+4. `npx @google/clasp create-deployment` でデプロイする（ウェブアプリの設定「自分として実行・全員がアクセス可」は `gas/appsscript.json` で指定済み）
+5. 表示されたデプロイIDから URL（`https://script.google.com/macros/s/<デプロイID>/exec`）を作る
 
 ### 2. PWA
 1. `config.js` の `GAS_URL` に、手順 1-5 の URL を貼り付ける
@@ -35,7 +34,7 @@ PWA（Vercel: https://bonenkai-pwa.vercel.app/） ⇄ GAS（Webアプリ） ⇄ 
 ## 別のイベントで使うとき（前回のデータは残す）
 前回のスプレッドシートはそのまま残し、新しいスプレッドシートに切り替える。
 
-1. 新しいスプレッドシートを作り、「セットアップ 1.」の手順（Code.gs の貼り付け → `setup` 実行 → 新しいデプロイ）で新しい GAS の URL を発行する
+1. 新しいスプレッドシートを作り、「セットアップ 1.」の手順（`.clasp.json` のスクリプトIDを差し替え → push → `setup` 実行 → デプロイ）で新しい GAS の URL を発行する
 2. 新しいスプレッドシートの「開催情報」に「イベント名」（例：忘年会）と日時・場所などを書く
 3. `config.js` の `GAS_URL` を新しい URL に差し替えて、commit → `git subtree push --prefix=bonenkai bonenkai main` で反映する
 4. メンバーは「まとめて追加」で登録し直す（前回のスプレッドシートの「声掛け」シートの名前列をコピーして使える）
@@ -52,7 +51,11 @@ npm test
 テスト関連のファイルは `.vercelignore` で公開対象から外している。
 
 ## GAS を修正したとき
-「デプロイ > デプロイを管理」で既存のデプロイを編集し、バージョンを「新バージョン」にして更新する（URL は変わらない）。
+URL を変えずに新しいバージョンへ更新する（デプロイIDは `config.js` の URL の `/s/` と `/exec` の間）。
+```
+npx @google/clasp push --force
+npx @google/clasp create-deployment -i <デプロイID> -d "<変更内容>"
+```
 
 ## 注意
 - ログインがないため、URL を知っている人は誰でも閲覧・編集できる
